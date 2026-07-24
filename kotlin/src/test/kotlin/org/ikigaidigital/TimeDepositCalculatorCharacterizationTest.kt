@@ -145,6 +145,34 @@ class TimeDepositCalculatorCharacterizationTest {
         fun `negative balance accrues negative interest`() {
             assertThat(balanceAfter("basic", days = 31, balance = -1_000.00)).isEqualTo(-1_000.83)
         }
+
+        /**
+         * C20 / SPEC A6 — pins the rounding MODE (HALF_UP), the complement to C9.
+         *
+         * C9 pins the `BigDecimal(double)` constructor but does NOT distinguish HALF_UP from
+         * HALF_DOWN: its raw interest (0.01499999...) sits just *below* its midpoint, so both modes
+         * round it down. To pin the mode we need a raw increment that lands on an EXACT binary
+         * midpoint. `basic 150.00`: 150 * 0.01 / 12 = 0.125, which is exactly 1/8 and therefore
+         * representable with zero binary drift — a true half. There HALF_UP rounds the increment up
+         * (0.13) and HALF_DOWN down (0.12). Likewise student 50.00 (0.125) and premium 30.00 (0.125).
+         *
+         * Found by the Phase 7 mutation gauntlet: `HALF_UP -> HALF_DOWN` survived the entire suite
+         * until this test existed, because no human-chosen pinned value happened to hit a midpoint.
+         * The `isNotEqualTo(halfDown)` mirrors C9's shape — assert the mode, not just the value.
+         */
+        @ParameterizedTest(name = "{0} at {1}d on {2} rounds the midpoint half UP to {3}, not {4}")
+        @CsvSource(
+            "basic,   31, 150.00, 150.13, 150.12",
+            "student, 31,  50.00,  50.13,  50.12",
+            "premium, 46,  30.00,  30.13,  30.12"
+        )
+        fun `interest at an exact binary midpoint rounds half up not half down`(
+            plan: String, days: Int, balance: Double, halfUp: Double, halfDown: Double
+        ) {
+            assertThat(balanceAfter(plan, days, balance))
+                .isEqualTo(halfUp)
+                .isNotEqualTo(halfDown)
+        }
     }
 
     @Nested
