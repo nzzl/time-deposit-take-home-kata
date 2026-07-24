@@ -169,3 +169,37 @@ instead. Re-verified with `javap`: the public surface is now exactly the two con
 after any change to a frozen or near-frozen class — source-level visibility keywords are not
 sufficient evidence in Kotlin.
 **Phase.** 3a.
+
+## E2 — Misread a reporting artifact as a silent loss of 27 tests
+**Produced.** After the toolchain upgrade I read
+`target/surefire-reports/*.txt`, saw
+`Tests run: 0 ... in TimeDepositCalculatorCharacterizationTest`, and reported that the
+characterization suite had been silently dropped — then spent three experiments "fixing"
+surefire's include/exclude patterns.
+**Wrong because.** Nothing was lost. Surefire 3.5.6's per-class `.txt` summary counts only a class's
+**direct** test methods; tests inside `@Nested` inner classes are recorded in the JUnit XML and the
+console aggregate instead. The XML held all 27 the entire time. A control run with the surefire
+configuration removed produced the identical 27, proving my "fix" was inert cargo cult — it was
+added and then removed, leaving the pom byte-identical to before the experiment.
+**Root cause of the mistake.** My own evidence-gathering command was wrong. I had been using
+`cat target/surefire-reports/*.txt | grep "Tests run"` as gate evidence since Phase 2. Under
+surefire 2.22.2 that happened to report nested tests correctly, so the habit went unchallenged; the
+upgrade to 3.5.6 changed the reporting and my command silently began under-counting. I trusted a
+derived summary over the authoritative record.
+**Corrected to.** Gate evidence now counts `<testcase` elements in
+`target/surefire-reports/*.xml`, which is authoritative and per-class, and reports the total.
+**Constraint tightened.** When a build tool version changes, re-validate the *evidence-gathering*
+commands, not just the build. A metric that silently changes meaning under a version bump is worse
+than no metric. Also: run the control experiment **before** announcing a diagnosis — the fix that
+"worked" here worked because of a clean rebuild, not because of the change.
+**Phase.** 3b.
+
+## D13 — The JDBC and Postgres dependencies are deferred to the persistence slice
+**Decision.** Slice 3b adds `spring-boot-starter-web`, springdoc, `spring-boot-starter-test` and the
+Testcontainers test dependencies, but not `spring-boot-starter-jdbc` or the Postgres driver.
+**Reason.** Adding the JDBC starter without a configured datasource makes Boot fail at startup, which
+would make 3b's own acceptance criterion — "the application boots" — unverifiable. The driver and
+starter arrive in 3c together with the schema and datasource configuration that make them coherent.
+**Rejected.** Adding everything in 3b and configuring a datasource URL pointing at a database that
+does not yet exist, purely to keep the context starting.
+**Phase.** 3b. Flagged at the 3b gate as a deviation from "pom per SPEC in one slice".
