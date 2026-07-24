@@ -203,3 +203,44 @@ starter arrive in 3c together with the schema and datasource configuration that 
 **Rejected.** Adding everything in 3b and configuring a datasource URL pointing at a database that
 does not yet exist, purely to keep the context starting.
 **Phase.** 3b. Flagged at the 3b gate as a deviation from "pom per SPEC in one slice".
+
+## D14 — The brief's camelCase identifiers are honoured and therefore quoted
+**Decision.** Tables and columns use the brief's exact camelCase names (`timeDeposits`, `planType`,
+`timeDepositId`, …) and every identifier is double-quoted in the DDL and in all adapter SQL.
+**Reason.** Faithfulness to the specified contract is the theme of this exercise, and the brief lists
+the names explicitly. Postgres folds unquoted identifiers to lower case, so `planType` would silently
+become `plantype`; quoting is the only way to keep the specified name. The cost is that every
+identifier in every statement must be quoted.
+**Rejected.** Unquoted lower-case identifiers (drifts from the brief's names); snake_case physical
+columns behind a logical mapping (extra machinery, still not the brief's names).
+**Phase.** 3c. Pinned by test P3, which failed with `plantype` when the quotes were removed.
+
+## D15 — Persistence tests share one Testcontainers Postgres and fail loudly without Docker
+**Decision.** A `PostgresContainerSupport` base starts a single `postgres:16-alpine` container for
+the test JVM (singleton pattern), wires it via `@DynamicPropertySource`, and asserts Docker is
+available in its initializer — throwing a clear "Docker is not running" message if not.
+**Reason.** Implements D7 literally: loud failure, never a skip. The singleton container avoids
+per-class startup cost; `@DynamicPropertySource` avoids needing the extra `spring-boot-testcontainers`
+dependency for `@ServiceConnection`. Schema is applied by Spring Boot's SQL initializer against the
+container (`spring.sql.init.mode=always`).
+**Rejected.** `@EnabledIfDockerAvailable` / `assumeTrue` (silent skip, forbidden by D7); a
+per-class `@Container` (slower, one container per test class); `@ServiceConnection` (needs an extra
+dependency for no gain here).
+**Consequence.** The 3b boot smoke test now extends this base — with the JDBC starter present the
+context cannot start without a datasource, so "the app boots" legitimately means "boots with its
+database" (D13).
+**Phase.** 3c.
+
+---
+
+## Red→green evidence for the persistence tests (Phase 3c)
+The adapter and its tests were written together, so "red then green" was demonstrated by mutation
+rather than by temporal ordering — the same technique used to prove the characterization suite
+non-vacuous in Phase 2. Each probe was applied to a clone of the working tree and reverted:
+
+| Probe | Mutation | Result |
+|---|---|---|
+| Column scale (the OPEN-1 risk) | `balance NUMERIC` → `NUMERIC(19,2)` | P1 **red** on C10 only: `expected 6.029999999999999 but was 6.03`. Every 2-dp pin still passed — proving the test isolates exactly the sub-cent boundary the unconstrained column exists to protect. |
+| Identifier quoting (D14) | dropped the quotes around `"planType"` | P3 **red**: observed columns `[id, days, balance, plantype]` — Postgres folded the name — and P1/P2 red on `bad SQL grammar`, since the adapter's quoted SQL no longer matched. |
+
+Restored, the full suite is green (36 tests, 0 failures).

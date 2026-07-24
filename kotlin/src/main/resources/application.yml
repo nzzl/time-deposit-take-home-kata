@@ -1,0 +1,14 @@
+spring:
+  application:
+    name: time-deposit
+  sql:
+    init:
+      # schema.sql is not run for a non-embedded database unless this is "always". The DDL is
+      # idempotent (CREATE TABLE IF NOT EXISTS), so re-running it on every startup is safe.
+      mode: always
+
+# The OpenAPI document and Swagger UI the brief requires. Kept at their springdoc defaults
+# (/v3/api-docs and /swagger-ui.html); the README documents how to reach them.
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html

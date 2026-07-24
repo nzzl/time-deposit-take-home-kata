@@ -57,6 +57,17 @@
             <artifactId>spring-boot-starter-web</artifactId>
         </dependency>
 
+        <!-- JdbcClient, DataSource auto-configuration and declarative transactions. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-jdbc</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+
         <!-- Serves the OpenAPI contract and Swagger UI required by the brief. -->
         <dependency>
             <groupId>org.springdoc</groupId>
