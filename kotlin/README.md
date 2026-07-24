@@ -240,8 +240,9 @@ turns the round-trip test red on exactly the sub-cent value).
 
 The operator ran `mvn -q test` from `kotlin/` independently at every phase gate and confirmed the
 result before approving; verification was never taken on the agent's word. Through the Phase 7
-reopening the agent observed **49 tests green, 0 failures** (fresh `mvn clean` then `mvn -q test`);
-the operator's own confirming run of the final count is recorded on approval of this closure.
+reopening the agent observed **49 tests green, 0 failures** (fresh `mvn clean` then `mvn -q test`).
+At closure the operator ran the suite independently one final time — **49 green, fresh** — and
+approved. Repo closed.
 
 ---
 
