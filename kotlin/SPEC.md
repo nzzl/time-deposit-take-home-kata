@@ -170,9 +170,16 @@ The per-plan strategy is **required by Constraint 4** ("extensible to accommodat
 complexities"), so it is not speculative abstraction under the minimalism rule. Nothing beyond it
 is introduced: no generic rule engine, no event bus, no caching.
 
-Faithfulness note for Phase 3: the shared `days > 30` gate is kept as an outer guard with each plan
+~~Faithfulness note for Phase 3: the shared `days > 30` gate is kept as an outer guard with each plan
 owning its own additional predicate, mirroring the original nesting — rather than collapsing
-premium's redundant `>30 && >45` into `>45`. This keeps the refactor auditably equivalent.
+premium's redundant `>30 && >45` into `>45`. This keeps the refactor auditably equivalent.~~
+
+**SUPERSEDED in Phase 3a — see DECISIONS.md D11.** Each plan now states its **complete** eligibility
+rule and there is no outer gate. Implementing the original wording produced the argument against it:
+the per-plan predicate could not be given an honest name, because `accruesAfterMinimumTerm(10)`
+returned `true` for a basic deposit that earns nothing at 10 days. The rule was one concept split
+across two places. Byte-identity is unaffected and is verified by differential sweep rather than by
+structural resemblance to the legacy nesting.
 
 ---
 

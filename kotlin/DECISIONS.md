@@ -91,3 +91,81 @@ documented precondition of the verification command, and belongs in the README.
 unnoticed, which is precisely the class of regression these tests exist to catch.
 **Rejected.** `isCloseTo(..., offset(0.01))`, and asserting only that "interest was applied".
 **Phase.** 2.
+
+## D9 — The vacuous legacy test is deleted
+**Decision.** `TimeDepositCalculatorTest.kt`, whose sole assertion was `assertThat(1).isEqualTo(1)`,
+is removed.
+**Reason.** It exercised `updateBalance` and then asserted nothing about it — a placebo that reports
+green regardless of behaviour. Removing dead weight of exactly this kind is what the exercise is
+for, and it is superseded by the 27-test characterization suite that pins the same method properly.
+Refactoring Constraint 4 protects the `TimeDeposit` class and the `updateBalance` signature; it says
+nothing about test files.
+**Rejected.** Keeping it for "coverage" — it contributes none.
+**Phase.** 3a (operator ruling).
+
+## D10 — Interest rules become per-plan strategies behind a plain interface
+**Decision.** Each plan is an `InterestPlan` implementation (`BasicPlan`, `StudentPlan`,
+`PremiumPlan`) in a `domain` package; `TimeDepositCalculator` takes `List<InterestPlan>` with the
+legacy three as the default.
+**Reason.** The brief requires the design be "extensible to accommodate future complexities in
+interest calculations". A new plan is now added by implementing an interface and passing it in —
+no edit to the calculator. Under the working agreement's minimality rule this abstraction is
+permitted precisely because the spec demands it; nothing beyond it was introduced.
+**Rejected.** A `sealed interface` — sealing confines implementations to this module, which is the
+opposite of the stated requirement. Also rejected: a rule-engine or expression DSL (speculative), and
+a `when` block over plan strings (not extensible without editing the calculator).
+**Phase.** 3a.
+
+## D11 — Each plan owns its complete eligibility rule; there is no outer gate
+**Decision.** `accruesAt(days)` on each plan fully describes when that plan accrues — basic
+`days > 30`, student `days > 30 && days < 366`, premium `days > 45`. `TimeDepositCalculator` holds
+no interest rule of its own.
+**Reason.**
+1. **Honest naming.** The method name describes exactly what it returns. The rejected design could
+   not manage this: `BasicPlan.accruesAfterMinimumTerm(10)` returned `true` for a deposit that earns
+   nothing at 10 days, because the shared gate lived in the calculator. A name that cannot describe
+   its own return value is a symptom of one concept split across two places — the same
+   "name implies a guarantee it does not provide" trap catalogued during Phase 0 recon.
+2. **The brief does not claim universality.** It scopes the rule to "no interest for the first 30
+   days for any **existing** plans". A universal outer gate over-claims, and would silently block a
+   future plan intended to accrue from day 1.
+3. **Extensibility per Constraint 4.** A new plan type is now a self-contained drop-in: implement
+   the interface, pass it in, change no existing file.
+**Accepted cost.** The `days > 30` comparison is written twice (basic and student). Bought: three
+plans that each read as a complete, independent rule. `MINIMUM_TERM_DAYS` is exposed as a shared
+constant plans *may* use, not a gate imposed on them.
+**Rejected.** An outer `days > 30` gate in the calculator with per-plan supplementary predicates —
+structurally closer to the legacy nesting, but only cosmetically so, since byte-identity is
+established by differential sweep rather than by resemblance.
+**History.** SPEC.md §6 originally specified the rejected design; implementing it produced the
+argument against it, which was raised at the 3a gate rather than switched unilaterally. SPEC.md §6
+is struck through and points here. Both designs are behaviourally identical — re-verified over
+47.6M inputs after the switch.
+**Phase.** 3a (operator ruling).
+
+## D12 — `@JvmOverloads` preserves the no-argument constructor
+**Decision.** The new `plans` constructor parameter is annotated `@JvmOverloads`.
+**Reason.** Kotlin default arguments do not emit a real no-arg constructor; they emit a synthetic
+one taking a bitmask. Without the annotation, existing Java callers writing
+`new TimeDepositCalculator()` would fail to compile — a breaking change to a class the brief asks us
+to extend without disturbing. Verified with `javap`: both `TimeDepositCalculator()` and
+`TimeDepositCalculator(List)` are present on the public surface.
+**Rejected.** A secondary explicit constructor (more code, same effect).
+**Phase.** 3a.
+
+---
+
+## E1 — A private companion constant leaked onto the public API surface
+**Produced.** `MINIMUM_TERM_DAYS` as a `const val` inside a `private companion object` of
+`TimeDepositCalculator`.
+**Wrong because.** `javap` showed `public static final int MINIMUM_TERM_DAYS` on the class. In
+Kotlin a `const val` compiles to a static field on the *enclosing* class and stays public even when
+the companion is private. The refactor therefore widened the public surface of the one class the
+brief asks us to leave alone — the opposite of the intent, and invisible from the source.
+**Corrected to.** A file-private top-level `private const val`, which compiles into the file class
+instead. Re-verified with `javap`: the public surface is now exactly the two constructors and
+`updateBalance`.
+**Constraint tightened.** Public API surface is checked with `javap` against the compiled bytecode
+after any change to a frozen or near-frozen class — source-level visibility keywords are not
+sufficient evidence in Kotlin.
+**Phase.** 3a.

@@ -1,27 +1,47 @@
 package org.ikigaidigital
 
-import java.math.BigDecimal
-import java.math.RoundingMode
+import org.ikigaidigital.domain.InterestPlan
+import org.ikigaidigital.domain.InterestRounding
 
-class TimeDepositCalculator {
+/**
+ * Applies one month's interest to each supplied deposit.
+ *
+ * ## Contract preserved from the legacy implementation
+ *
+ * - [updateBalance] keeps its package, name, parameter type and `Unit` return (brief, Constraint 4).
+ * - It **mutates the caller's [TimeDeposit] instances in place**. Callers rely on that aliasing; it
+ *   does not return anything and does not copy.
+ * - It performs no I/O. Persisting the results is the caller's job.
+ * - Exactly one month of interest is applied per invocation regardless of `days`, so repeated calls
+ *   compound (SPEC.md A1, A12).
+ *
+ * The calculator holds no interest rules of its own: eligibility and rate belong entirely to the
+ * [InterestPlan] implementations (DECISIONS.md D11).
+ *
+ * @param plans the interest rules to apply. Defaults to the three plans the legacy code recognised;
+ *   supply your own to add plan types without modifying this class.
+ */
+class TimeDepositCalculator @JvmOverloads constructor(
+    plans: List<InterestPlan> = InterestPlan.defaults()
+) {
+
+    private val plansByType: Map<String, InterestPlan> = plans.associateBy { it.planType }
+
     fun updateBalance(xs: List<TimeDeposit>) {
-        for (i in xs.indices) {
-            var interest = 0.0
-            if (xs[i].days > 30) {
-                if (xs[i].planType == "student") {
-                    if (xs[i].days < 366) {
-                        interest += xs[i].balance * 0.03 / 12
-                    }
-                } else if (xs[i].planType == "premium") {
-                    if (xs[i].days > 45) {
-                        interest += xs[i].balance * 0.05 / 12
-                    }
-                } else if (xs[i].planType == "basic") {
-                    interest += xs[i].balance * 0.01 / 12
-                }
-            }
-            val a2d = BigDecimal(interest).setScale(2, RoundingMode.HALF_UP)
-            xs[i].balance += a2d.toDouble()
+        for (deposit in xs) {
+            deposit.balance += InterestRounding.toCents(monthlyInterestFor(deposit))
         }
+    }
+
+    /**
+     * One month's interest for [deposit], or `0.0` if it earns none.
+     *
+     * Returning zero — rather than raising — for an unrecognised `planType` preserves the legacy
+     * chain's missing `else` branch (SPEC.md A5).
+     */
+    private fun monthlyInterestFor(deposit: TimeDeposit): Double {
+        val plan = plansByType[deposit.planType] ?: return 0.0
+        if (!plan.accruesAt(deposit.days)) return 0.0
+        return plan.monthlyInterestOn(deposit.balance)
     }
 }
