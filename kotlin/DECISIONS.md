@@ -321,3 +321,44 @@ active under `--spring.profiles.active=demo` (six deposits + two withdrawals see
 placeholder-grade.
 **Phase.** ruling received 3d; implemented Phase 6 as `config/OpenApiConfig.kt`. Verified live:
 `/v3/api-docs` now reports title "XA Bank Time Deposit API", version 1.0.0.
+
+---
+
+## E4 — Ran the mutation gauntlet and the cross-model read on the same clone concurrently
+**Produced.** In Phase 7 I launched the background cross-model auditor against the audit clone, then
+ran the PIT setup and the 5-mutation manual gauntlet **in that same clone directory** while the
+auditor was still executing. The auditor's first `mvn -q test` hit my transient mutated state and
+reported `no plan earns interest at 30 days` failing for basic/student — then passed 46/46 on seven
+subsequent runs and two clean rebuilds, and it could not explain the failure.
+**Wrong because.** The failure signature — basic and student accruing at day 30, premium unaffected —
+is *exactly* manual mutation #3 (`days > MINIMUM_TERM_DAYS` → `days >= MINIMUM_TERM_DAYS`), which I
+was running concurrently in the same working tree. The auditor observed my mutation, not a defect.
+The committed code is correct: `days > MINIMUM_TERM_DAYS`, 27/27 (now 30/30) characterization tests
+green on every clean run. Same class of mistake as E2/E3 — evidence-side, not implementation-side.
+**Corrected to.** The reopening's mutation re-check ran in a **fresh, separate clone** created after
+the commit and discarded immediately after.
+**Constraint tightened.** Concurrent audit activities never share a working tree. Each mutation run,
+and any independent reviewer that executes the build, gets its own clone (or the runs are serialized
+with a clean rebuild between them). A mutation gauntlet must not overlap in-tree with anything else
+that runs the suite.
+**Phase.** 7.
+
+## A1 — Phase 7 reopening: pin the HALF_UP rounding mode (closes the one genuine audit finding)
+**Amendment.** The manual mutation gauntlet found that `HALF_UP → HALF_DOWN` survived the entire
+suite: no pinned value landed on a rounding midpoint, so the suite pinned the `BigDecimal(double)`
+constructor (C9) but not the rounding *mode*. Verified reachable, not equivalent — e.g. `basic
+150.00 @31` yields raw interest `0.125` (exactly 1/8, a true binary midpoint) → legacy HALF_UP gives
+`150.13`, HALF_DOWN `150.12`.
+**Resolution.** Added characterization case **C20** — a parameterized midpoint test (basic 150.00,
+student 50.00, premium 30.00, all → `.13`), each asserting the HALF_UP value and `isNotEqualTo` the
+HALF_DOWN counterfactual, mirroring C9's shape. Re-running the gauntlet in a fresh clone, the
+`HALF_UP → HALF_DOWN` mutation now **dies**. No production code changed — this closes a
+regression-detection gap, not a bug; the differential sweep had already shown the code itself was
+correct.
+**Audit dispositions (operator arbitration).** G1 fixed (this amendment). G2 fixed — the workflow
+method reproduced in `docs/ai-harness.md` with a README §10 pointer. F1 (`-0.0` round-trip) and F2
+(extreme-balance overflow → HTTP 500, atomic rollback, no partial corruption) accepted as documented
+known limitations, no code change — both unreachable through the two endpoints or waived by the
+brief. The two PIT `NO_COVERAGE` survivors confirmed not-a-gap (auto-generated read-model getters,
+killed by the endpoint/persistence suites).
+**Phase.** 7 (one reopening, then closed).

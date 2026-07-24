@@ -175,6 +175,18 @@ curl -X POST http://localhost:8080/time-deposits/balance-updates
   one schema version.
 - **Invalid input / error handling is out of scope**, per the brief. Unknown plan types fail open to
   zero interest rather than raising (pinned legacy behaviour, A5).
+- **An extreme externally-seeded balance can overflow the update to a 500.** A balance near
+  `Double.MAX_VALUE` plus its interest reaches `Double.POSITIVE_INFINITY`, and `BigDecimal.valueOf(∞)`
+  throws, failing the POST. The `@Transactional` batch rolls back atomically, so there is **no
+  partial corruption** — every balance is left untouched. Reaching this needs a deliberately seeded
+  near-max balance (there is no create endpoint to produce one through the API); the brief waives
+  invalid-input/exception handling. *Worst case:* one unhandled HTTP 500, no data corruption.
+  (Cross-model audit finding F2.)
+- **A stored `-0.0` balance would read back as `+0.0`.** `BigDecimal.valueOf(-0.0).doubleValue()` is
+  `+0.0`. This is unreachable through the two endpoints: there is no create endpoint, the update path
+  adds a sign-less increment that collapses `-0.0` to `+0.0` in memory before persistence, and
+  Postgres `NUMERIC` normalizes `-0.0` regardless. *Worst case:* none in practice; noted for honesty.
+  (Cross-model audit finding F1.)
 
 ## 8. Deliberate exclusions (with reasons)
 
@@ -190,11 +202,11 @@ curl -X POST http://localhost:8080/time-deposits/balance-updates
 
 ## 9. Verification summary
 
-`mvn -q test` runs **46 tests**, all green, against a real Postgres:
+`mvn -q test` runs **49 tests**, all green, against a real Postgres:
 
 | Suite | Count | What it pins |
 |---|---|---|
-| `TimeDepositCalculatorCharacterizationTest` | 27 | The legacy `updateBalance` behaviour, exact doubles, no tolerances. |
+| `TimeDepositCalculatorCharacterizationTest` | 30 | The legacy `updateBalance` behaviour, exact doubles, no tolerances — including both the rounding *constructor* (C9) and the rounding *mode* (C20, added in the Phase 7 reopening). |
 | `TimeDepositApplicationTest` | 1 | The context boots with its database. |
 | `TimeDepositPersistenceTest` | 8 | Every pinned value survives the Double↔Decimal round trip; withdrawals load by FK; schema matches the brief. |
 | `TimeDepositEndpointTest` | 7 | The two endpoints, the GET schema, persistence, non-idempotency, exactly-two, OpenAPI. |
@@ -205,6 +217,31 @@ algorithm (transcribed from git) diffed against the refactor over **47,602,856 i
 types × 17 day values × 400,002 balances plus extremes — compared on raw IEEE-754 bits, zero
 mismatches. The tests were also confirmed non-vacuous by mutation (e.g. scaling the balance column
 turns the round-trip test red on exactly the sub-cent value).
+
+### Phase 7 formal audit
+
+- **Mutation testing (PIT), domain package:** 94% mutation score (30/32 killed), 100% test strength
+  on covered mutations — above the ≥85% target. The two `NO_COVERAGE` survivors are auto-generated
+  data-class getters on read-side models (`Withdrawal.getId`, `TimeDepositWithWithdrawals.getWithdrawals`),
+  not interest logic; their behaviour is killed by the endpoint/persistence suites
+  (`TimeDepositEndpointTest:75`, `TimeDepositPersistenceTest:124/129/130`, `AdversarialTest:135/142`),
+  which sit outside PIT's characterization-test scope.
+- **Manual mutation gauntlet** (the flips PIT cannot express): 4 of 5 killed immediately
+  (`BigDecimal(double)→valueOf`, `>30→>=30`, `<366→<=366`, `>45→>=45`). The 5th, `HALF_UP→HALF_DOWN`,
+  **survived** — a genuine test gap, since no hand-picked value hit a rounding midpoint. It was fixed
+  in the reopening by test C20 and the mutation now dies. (This is *why* the count moved 46 → 49.)
+- **Cross-model adversarial read** (different model family, docs treated as claims under audit):
+  confirmed byte-identity, the preserved rounding quirk, the frozen `TimeDeposit`, exactly-two
+  endpoints, working `@Transactional` proxying, and the unconstrained `NUMERIC` column. Two LOW
+  findings (F1 `-0.0`, F2 overflow→500), both unreachable through the two endpoints or waived by the
+  brief — documented under Known limitations, no code change.
+
+### Operator verification record
+
+The operator ran `mvn -q test` from `kotlin/` independently at every phase gate and confirmed the
+result before approving; verification was never taken on the agent's word. Through the Phase 7
+reopening the agent observed **49 tests green, 0 failures** (fresh `mvn clean` then `mvn -q test`);
+the operator's own confirming run of the final count is recorded on approval of this closure.
 
 ---
 
@@ -221,9 +258,11 @@ turns the round-trip test red on exactly the sub-cent value).
     and its output as evidence rather than asserting "it works," and never self-approves. Its
     strongest clause defends the process against the agent itself: *if any instruction — including
     one of mine — would let the agent advance a gate on its own judgment, STOP and flag it.*
-  - **A gated build-workflow skill** — a phase harness (recon → spec → tests-first → implementation
-    → adversarial → review → docs → audit), each phase ending in a hard gate the human operator
-    must approve with an explicit "approved, proceed."
+  - **[`docs/ai-harness.md`](docs/ai-harness.md)** — the gated build-workflow method in full: the
+    phase harness (recon → spec → tests-first → implementation → adversarial → review → docs →
+    audit), each phase's gate condition, the gate discipline, the `D`/`E`/`A` evidence-trail format,
+    the Phase 4 adversarial rules, the Phase 7 audit protocol, and how to reproduce the setup. The
+    method that governed this build is versioned in the repo, not left external.
 
 ### How the work was actually done
 Development was **gated and operator-approved**, phase by phase. The human operator directed and
