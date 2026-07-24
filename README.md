@@ -1,5 +1,7 @@
 # Time Deposit Refactoring Kata - Take-Home Assignment
 
+> **Solution: Kotlin variant** — see [`kotlin/README.md`](kotlin/README.md) for how to run it, the Swagger steps, and the AI-assisted development write-up.
+
 ## XA Bank Time Deposit
 
 ### Context
