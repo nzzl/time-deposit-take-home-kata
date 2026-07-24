@@ -2,6 +2,7 @@ package org.ikigaidigital.adapter.web
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import org.assertj.core.api.Assertions.assertThat
+import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.ikigaidigital.support.PostgresContainerSupport
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -144,6 +145,58 @@ class AdversarialTest @Autowired constructor(
         assertThat(byWithdrawalId.getValue(20).first).isEqualByComparingTo("25.00")
         assertThat(byWithdrawalId.getValue(20).second).isEqualTo(LocalDate.of(2026, 2, 20))
     }
+
+    /**
+     * Test 4 — write-back and post-write failures roll the whole batch back.
+     *
+     * The second row overflows to +Infinity after interest is applied; converting that balance with
+     * BigDecimal.valueOf throws during persistence. Row 1 is processed before the throwing row, so this
+     * pins that even already-attempted updates are rolled back.
+     *
+     * The second half fails after all balance updates have been attempted, while assembling the return
+     * body. That is the path that distinguishes the service-level transaction from the repository's
+     * narrower write-back transaction.
+     */
+    @Test
+    fun `failed POST rolls back balances already processed before the failure`() {
+        insertDeposit(id = 1, planType = "basic", balance = "1000.00", days = 31)
+        insertDeposit(id = 2, planType = "basic", balance = BigDecimal.valueOf(Double.MAX_VALUE).toString(), days = 31)
+        insertDeposit(id = 3, planType = "premium", balance = "500.00", days = 46)
+
+        assertThatThrownBy { mockMvc.post("/time-deposits/balance-updates") }
+            .hasRootCauseInstanceOf(NumberFormatException::class.java)
+
+        val balances = persistedBalances()
+        assertThat(balances.getValue(1)).isEqualByComparingTo("1000.00")
+        assertThat(balances.getValue(2)).isEqualByComparingTo(BigDecimal.valueOf(Double.MAX_VALUE))
+        assertThat(balances.getValue(3)).isEqualByComparingTo("500.00")
+
+        cleanDatabase()
+        insertDeposit(id = 10, planType = "basic", balance = "1000.00", days = 31)
+        insertDeposit(id = 20, planType = "premium", balance = "500.00", days = 46)
+        insertUnreadableWithdrawalAmount(id = 99, timeDepositId = 10)
+
+        assertThatThrownBy { mockMvc.post("/time-deposits/balance-updates") }
+            .hasMessageContaining("Bad value for type BigDecimal : NaN")
+
+        val balancesAfterReturnFailure = persistedBalances()
+        assertThat(balancesAfterReturnFailure.getValue(10)).isEqualByComparingTo("1000.00")
+        assertThat(balancesAfterReturnFailure.getValue(20)).isEqualByComparingTo("500.00")
+    }
+
+    private fun insertUnreadableWithdrawalAmount(id: Int, timeDepositId: Int) {
+        jdbc.sql(
+            """INSERT INTO "withdrawals" ("id","timeDepositId","amount","date")
+               VALUES (:id,:timeDepositId,'NaN'::numeric,:date)"""
+        ).param("id", id).param("timeDepositId", timeDepositId)
+            .param("date", LocalDate.of(2026, 6, 1)).update()
+    }
+
+    private fun persistedBalances(): Map<Int, BigDecimal> =
+        jdbc.sql("""SELECT "id", "balance" FROM "timeDeposits" ORDER BY "id"""")
+            .query { rs, _ -> rs.getInt("id") to rs.getBigDecimal("balance") }
+            .list()
+            .toMap()
 
     // Kotlin JsonNode helpers: iterate array nodes and pick one.
     private fun com.fasterxml.jackson.databind.JsonNode.single(
