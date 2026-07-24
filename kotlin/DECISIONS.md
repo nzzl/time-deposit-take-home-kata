@@ -244,3 +244,77 @@ non-vacuous in Phase 2. Each probe was applied to a clone of the working tree an
 | Identifier quoting (D14) | dropped the quotes around `"planType"` | P3 **red**: observed columns `[id, days, balance, plantype]` — Postgres folded the name — and P1/P2 red on `bad SQL grammar`, since the adapter's quoted SQL no longer matched. |
 
 Restored, the full suite is green (36 tests, 0 failures).
+
+## D16 — The inbound side is a concrete service; only the outbound port is an interface
+**Decision.** `TimeDepositService` is a concrete `@Service` the controller depends on directly. There
+is no inbound port interface. The outbound `TimeDepositRepository` remains an interface.
+**Reason.** An interface earns its place when it has more than one implementation or a real seam to
+defend. The outbound port has two implementations (JDBC adapter, test doubles) and isolates the core
+from the database — it earns it. The inbound side has exactly one driver (REST) calling exactly one
+implementation; an inbound port interface would be indirection the working agreement's minimality
+rule forbids. Hexagonal is "embraced" where it pays — at the boundary that actually varies.
+**Rejected.** Symmetric inbound port interfaces (`UpdateBalancesUseCase`, `GetDepositsUseCase`) — a
+common hexagonal habit, but pure ceremony for a single REST driver.
+**Phase.** 3d.
+
+## D17 — The inbound adapter package is `adapter/web`, not `adapter/in/web`
+**Decision.** The REST adapter lives in `org.ikigaidigital.adapter.web`, breaking the naming symmetry
+with `adapter/out/persistence`.
+**Reason.** `in` is a hard keyword in Kotlin. A package segment named `in` compiles only when
+back-ticked everywhere (`` adapter.`in`.web ``), which is noisy and error-prone. `web` names the
+driving side unambiguously. (`out` is only a soft keyword and remains legal as a package segment,
+so the outbound side keeps its conventional name.)
+**Rejected.** `` adapter.`in`.web `` (back-tick noise); renaming `adapter/out/persistence` to
+`adapter/outbound/...` for symmetry (churns committed 3c code for cosmetics).
+**Phase.** 3d.
+
+## D18 — The update endpoint is POST to a noun sub-collection, returning the updated deposits
+**Decision.** `POST /time-deposits/balance-updates`; the retrieval endpoint is `GET /time-deposits`.
+The POST returns the updated deposits in the GET schema.
+**Reason.** The update compounds on each call (A12), so it is not idempotent; `PUT` implies
+idempotency and would misrepresent it, whereas `POST` does not. `balance-updates` is a noun
+(a collection of update operations) rather than an RPC verb. Returning the updated list makes the
+result observable in Swagger without adding a third endpoint.
+**Rejected.** `PUT /time-deposits/balances` (false idempotency signal); a verb path like
+`/time-deposits/update`; returning 204 No Content (less usable in the required Swagger demo).
+**Phase.** 3d.
+
+---
+
+## E3 — A shell `||` fallback in my live demo fired a second POST and I briefly misread it as a bug
+**Produced.** During the 3d live demo I ran
+`curl -X POST … | python3 -m json.tool 2>/dev/null || curl -X POST …`. The `-w` HTTP-code suffix made
+the first curl's output invalid JSON, so `json.tool` exited non-zero and the `||` fallback fired a
+**second** POST. The balance compounded 1234567.00 → 1235595.81 → 1236625.47, and for a moment the
+endpoint looked like it was double-applying interest.
+**Wrong because.** The application applied exactly one month per call, correctly. The second
+application came from my own shell line calling the endpoint twice — the same class of mistake as E2:
+the defect was in my evidence-gathering, not the code. A clean single-POST run (HTTP 200) and the
+green E4 test both confirm one call yields 1235595.81.
+**Corrected to.** Capture the status with `-w "%{http_code}"` to `/dev/null` and pretty-print in a
+separate step; never chain a mutating request behind `||`.
+**Constraint tightened.** A verification command that performs a side effect (POST/PUT/DELETE) must
+run exactly once, never inside a `||`/`&&` chain whose other branch repeats it. Read the *automated*
+test (E5 already pins the two-call value) before trusting an ad-hoc manual run.
+**Phase.** 3d.
+
+---
+
+## D19 — Demo seed data via a `demo` Spring profile (PENDING — Phase 6) *(operator ruling)*
+**Decision.** A reviewer following the Swagger instructions must see real data. Seed it behind a
+`demo` profile — a `@Profile("demo")` `CommandLineRunner` that inserts a small fixed set of deposits
+and withdrawals only if the tables are empty — activated with `--spring.profiles.active=demo`.
+**Reason.** It must not interfere with test fixtures. Tests activate no profile, so a profile-gated
+runner never executes during `mvn test`; the persistence/endpoint tests keep full control of their
+own data (they `DELETE` in `@BeforeEach`). Insert-if-empty makes repeated demo starts idempotent.
+**Rejected.** A plain `data.sql` — with `spring.sql.init.mode=always` it would also run against the
+Testcontainers database, coupling demo data to test runs. Manual `psql` inserts only — turnkey-poor
+for a reviewer.
+**Phase.** ruling received 3d; implement in Phase 6.
+
+## D20 — OpenAPI title and description (PENDING — Phase 6) *(operator ruling)*
+**Decision.** Set a real contract title and a one-line description (replacing the springdoc default
+"OpenAPI definition") via a minimal `OpenAPI` `@Bean` with an `Info(title, description)`.
+**Reason.** Presentation of the contract is part of the submission instructions; the default title is
+placeholder-grade.
+**Phase.** ruling received 3d; implement in Phase 6.

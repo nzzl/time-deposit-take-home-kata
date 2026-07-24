@@ -7,8 +7,11 @@ spring:
       # idempotent (CREATE TABLE IF NOT EXISTS), so re-running it on every startup is safe.
       mode: always
 
-# The OpenAPI document and Swagger UI the brief requires. Kept at their springdoc defaults
-# (/v3/api-docs and /swagger-ui.html); the README documents how to reach them.
+# The OpenAPI document and Swagger UI the brief requires (served at /v3/api-docs and
+# /swagger-ui.html; the README documents how to reach them). Scanning is restricted to the web
+# adapter package so the contract lists exactly the two endpoints and nothing framework-provided
+# (e.g. the /error mapping) — which the brief's "exactly two endpoints" rule makes load-bearing.
 springdoc:
+  packages-to-scan: org.ikigaidigital.adapter.web
   swagger-ui:
     path: /swagger-ui.html
