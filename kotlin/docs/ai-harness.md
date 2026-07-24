@@ -68,12 +68,16 @@ any reopening, every factual claim in it is cross-checked against suite output, 
 4. **Closure:** one reopening maximum, then permanent. The README's operator-verification record is
    extended through the reopening.
 
+Second-reopening note: the operator later overrode the cap after an external audit found false or
+unreproducible graded-document claims. That override is logged in `DECISIONS.md` A2; the cap still
+stands for anti-polish churn, but not for leaving known false evidence uncorrected.
+
 ## Which parts were AI-assisted, and the honesty notes
 
 Essentially all production code, tests, and docs were AI-generated under this workflow — the exercise
 is about setting up and using the harness. The value it added was discipline, not raw generation:
 pinning legacy behaviour before touching it, computing expected values on the JVM rather than
-guessing, proving byte-identity by differential sweep, and surfacing every ambiguity to the operator.
+guessing, running an out-of-band differential sweep, and surfacing every ambiguity to the operator.
 
 - **Adversarial-test authorship:** the Phase 4 scenarios and their expected values were the
   operator's, specified as prose; the agent did the mechanical Kotlin translation and computed the

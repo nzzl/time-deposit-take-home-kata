@@ -63,6 +63,9 @@ significant digits**, and a double needs up to 17. `NUMERIC(19,2)` would silentl
 pinned value `6.029999999999999` to `6.03`, breaking characterization case C10 at the persistence
 boundary. Unconstrained `NUMERIC` is the only lossless option, and the brief specifies "Decimal"
 with no scale, so it is compliant.
+**Representation note.** `BigDecimal.valueOf` is deliberately chosen for readable Decimal storage, but
+the suite does not pin that constructor over `BigDecimal(double)` because both are exact conversions at
+the observable read/API boundaries this kata constrains.
 **Rejected.** `NUMERIC(19,2)` and `NUMERIC(38,17)`.
 **Production counterpoint — recorded deliberately.** In a real ledger the right answer is the
 opposite: a scaled column (`NUMERIC(19,2)`) with canonicalization at ingestion, so money cannot
@@ -139,8 +142,8 @@ structurally closer to the legacy nesting, but only cosmetically so, since byte-
 established by differential sweep rather than by resemblance.
 **History.** SPEC.md §6 originally specified the rejected design; implementing it produced the
 argument against it, which was raised at the 3a gate rather than switched unilaterally. SPEC.md §6
-is struck through and points here. Both designs are behaviourally identical — re-verified over
-47.6M inputs after the switch.
+is struck through and points here. Both designs are behaviourally identical — re-verified by the
+out-of-band 47.6M-input differential sweep after the switch.
 **Phase.** 3a (operator ruling).
 
 ## D12 — `@JvmOverloads` preserves the no-argument constructor
@@ -150,6 +153,8 @@ one taking a bitmask. Without the annotation, existing Java callers writing
 `new TimeDepositCalculator()` would fail to compile — a breaking change to a class the brief asks us
 to extend without disturbing. Verified with `javap`: both `TimeDepositCalculator()` and
 `TimeDepositCalculator(List)` are present on the public surface.
+The additive `List<InterestPlan>` constructor is the documented extension point required by the same
+constraint's extensibility clause; `@JvmOverloads` preserves every pre-existing no-arg call shape.
 **Rejected.** A secondary explicit constructor (more code, same effect).
 **Phase.** 3a.
 
@@ -311,7 +316,8 @@ own data (they `DELETE` in `@BeforeEach`). Insert-if-empty makes repeated demo s
 Testcontainers database, coupling demo data to test runs. Manual `psql` inserts only — turnkey-poor
 for a reviewer.
 **Phase.** ruling received 3d; implemented Phase 6 as `config/DemoDataSeeder.kt` — `@Profile("demo")`
-`CommandLineRunner`, insert-if-empty. Verified inactive under `mvn test` (46 tests unchanged) and
+`CommandLineRunner`, insert-if-empty. Verified inactive under `mvn test` (then-current test count
+unchanged) and
 active under `--spring.profiles.active=demo` (six deposits + two withdrawals seeded).
 
 ## D20 — OpenAPI title and description *(operator ruling)*
@@ -362,3 +368,30 @@ known limitations, no code change — both unreachable through the two endpoints
 brief. The two PIT `NO_COVERAGE` survivors confirmed not-a-gap (auto-generated read-model getters,
 killed by the endpoint/persistence suites).
 **Phase.** 7 (one reopening, then closed).
+
+## E5 — The reopening README audit checked the delta, not the whole document set
+**Produced.** During the first reopening's docs pass I declared the README audit clean while stale
+pre-existing test-count claims remained in `kotlin/README.md` and `DECISIONS.md`.
+**Wrong because.** Documentation is graded as a set of factual claims, not as a patch delta. A
+delta-only audit can make a new paragraph true while leaving old contradictions in place, which is
+exactly what happened after the suite moved from 46 to 49 and later to 50 tests.
+**Corrected to.** Every stale count found by full-document grep is corrected, and the verification
+summary now reports the current 50-test suite with its 30/1/8/7/4 breakdown.
+**Constraint tightened.** A README/docs audit covers the entire document set against ground truth:
+`README.md`, `kotlin/README.md`, `kotlin/SPEC.md`, `kotlin/DECISIONS.md`, and
+`kotlin/docs/ai-harness.md`, not only lines touched in the current reopening.
+**Phase.** second reopening.
+
+## A2 — Second reopening override: documentation honesty outranks the one-reopening cap
+**Amendment.** The external Codex audit found false or unreproducible claims in graded documents.
+The operator deliberately overrode the one-reopening cap because correcting graded evidence outranks
+the cap's anti-polish purpose.
+**Audit dispositions.** F1 accepted: stale test-count lines corrected. F2 rejected: Constraint 4
+protects the `TimeDeposit` class and `updateBalance` signature, both bytecode-checked; the additive
+calculator constructor is the D12 extension point and `@JvmOverloads` preserves the old no-arg call
+shape. F3/F4 accepted: PIT and 47.6M differential evidence are tiered as out-of-band unless their
+harness/configuration is present in the repo. F5 accepted: rollback on failed POST is pinned, including
+a post-write failure that kills removal of the service-level `@Transactional`. F6 rejected as a test
+gap: `BigDecimal(double)` on write is behaviourally equivalent at every observable boundary this kata
+constrains, so the suite intentionally does not pin raw stored representation.
+**Phase.** second reopening.

@@ -98,7 +98,7 @@ D18).
 cd kotlin
 mvn -q test
 ```
-46 tests. The integration tests spin up a real Postgres via Testcontainers and **fail loudly** with
+50 tests. The integration tests spin up a real Postgres via Testcontainers and **fail loudly** with
 a clear message if Docker is not running (they never silently skip — `DECISIONS.md` D7).
 
 ### Run the application with seeded demo data
@@ -156,8 +156,9 @@ curl -X POST http://localhost:8080/time-deposits/balance-updates
 - **`withdrawals.amount` is `BigDecimal`; `balance` is `Double`.** Deliberate asymmetry: `balance` is
   bound by the frozen `TimeDeposit`; `Withdrawal` is new, so it uses the honest money type.
 - **Toolchain upgraded** to Spring Boot 3.5.16 / Kotlin 1.9.25. Constraint 4 protects the
-  `TimeDeposit` class and `updateBalance` signature, not the build. Byte-identity under the new
-  compiler was proven by differential test (below).
+  `TimeDeposit` class and `updateBalance` signature, not the build. Behaviour identity under the new
+  compiler is covered by characterization tests and by the out-of-band differential sweep described
+  with its evidence tier below.
 
 ## 7. Known limitations
 
@@ -181,7 +182,7 @@ curl -X POST http://localhost:8080/time-deposits/balance-updates
   partial corruption** — every balance is left untouched. Reaching this needs a deliberately seeded
   near-max balance (there is no create endpoint to produce one through the API); the brief waives
   invalid-input/exception handling. *Worst case:* one unhandled HTTP 500, no data corruption.
-  (Cross-model audit finding F2.)
+  (Cross-model audit finding F2; rollback now pinned by `AdversarialTest` Test 4.)
 - **A stored `-0.0` balance would read back as `+0.0`.** `BigDecimal.valueOf(-0.0).doubleValue()` is
   `+0.0`. This is unreachable through the two endpoints: there is no create endpoint, the update path
   adds a sign-less increment that collapses `-0.0` to `+0.0` in memory before persistence, and
@@ -194,15 +195,18 @@ curl -X POST http://localhost:8080/time-deposits/balance-updates
 - **No authentication, pagination, or filtering** — not required; would be scope creep.
 - **No migration tool, no seed `data.sql` in the default profile** — see Known limitations; demo
   data is profile-gated so it cannot touch test fixtures.
+- **The Decimal write path is not pinned as representation.** It uses `BigDecimal.valueOf` by
+  implementation choice, but `BigDecimal(double)` is also an exact conversion at observable read/API
+  boundaries here; the suite deliberately pins behaviour, not raw stored representation.
 - **Assurance deliberately not pursued:** fuzzing, model checking, contract testing, chaos/fault
   injection, concurrency testing, SAST/DAST, supply-chain and secrets scanning — each is
   disproportionate to a single-aggregate service that is arithmetic plus CRUD. The assurance that
-  *was* applied (characterization + differential + persistence round-trip + adversarial + a
-  differential byte-identity sweep) is described next.
+  *was* applied (characterization + persistence round-trip + adversarial + mutation probes, plus
+  separately tiered out-of-band audit evidence) is described next.
 
 ## 9. Verification summary
 
-`mvn -q test` runs **49 tests**, all green, against a real Postgres:
+`mvn -q test` runs **50 tests**, all green, against a real Postgres:
 
 | Suite | Count | What it pins |
 |---|---|---|
@@ -210,17 +214,40 @@ curl -X POST http://localhost:8080/time-deposits/balance-updates
 | `TimeDepositApplicationTest` | 1 | The context boots with its database. |
 | `TimeDepositPersistenceTest` | 8 | Every pinned value survives the Double↔Decimal round trip; withdrawals load by FK; schema matches the brief. |
 | `TimeDepositEndpointTest` | 7 | The two endpoints, the GET schema, persistence, non-idempotency, exactly-two, OpenAPI. |
-| `AdversarialTest` | 3 | The binary artifact survives JSON; fail-open is silent; POST-response equals persisted state. |
+| `AdversarialTest` | 4 | The binary artifact survives JSON; fail-open is silent; POST-response equals persisted state; failed POSTs roll back balance writes. |
 
-Beyond the suite, the refactor's byte-identity was proven by a **differential sweep**: the original
-algorithm (transcribed from git) diffed against the refactor over **47,602,856 inputs** — 7 plan
-types × 17 day values × 400,002 balances plus extremes — compared on raw IEEE-754 bits, zero
-mismatches. The tests were also confirmed non-vacuous by mutation (e.g. scaling the balance column
-turns the round-trip test red on exactly the sub-cent value).
+Evidence tiers:
+
+- **Reproducible from this repository:** `mvn clean` followed by `mvn -q test` from `kotlin/` runs the
+  50-test suite above against Testcontainers Postgres. Manual mutation probes are reproducible by
+  applying one source edit at a time, running the same clean full suite, then restoring with `git diff`
+  clean; examples include boundary flips, rounding constructor/mode flips, schema quoting removal, and
+  service `@Transactional` removal.
+- **PIT setup documented, historical score out-of-band:** the Phase 7 domain PIT run was recorded as
+  94% mutation score (30/32 killed), but the current `pom.xml` does not encode the PIT profile or keep
+  the generated report. To reproduce the same class of run, configure `org.pitest:pitest-maven` with
+  plugin dependency `org.pitest:pitest-junit5-plugin:1.2.3`, then run:
+
+  ```bash
+  cd kotlin
+  mvn test-compile org.pitest:pitest-maven:mutationCoverage \
+    -DtargetClasses=org.ikigaidigital.domain.* \
+    -DtargetTests=org.ikigaidigital.TimeDepositCalculatorCharacterizationTest
+  ```
+
+  Without that JUnit 5 plugin dependency, PIT reports no useful coverage; therefore the numeric score
+  is retained only as historical out-of-band evidence, not as a repo-reproducible claim.
+- **Differential sweep out-of-band:** a one-time harness transcribed the legacy calculator from its git
+  commit and compared it with the refactor on raw IEEE-754 bits over 47,602,856 inputs (7 plan types ×
+  17 day values × 400,002 balances plus extremes), with zero mismatches. That harness was ephemeral and
+  is not checked in. An independent Codex audit wrote its own scratch harness and found zero divergence
+  on adversarial inputs including day boundaries, malformed plan strings, repeated calls, extreme
+  doubles, NaN/infinities as exception-preservation cases, an empty list, and a 10,000-row list.
 
 ### Phase 7 formal audit
 
-- **Mutation testing (PIT), domain package:** 94% mutation score (30/32 killed), 100% test strength
+- **Mutation testing (PIT), domain package:** historical out-of-band result: 94% mutation score
+  (30/32 killed), 100% test strength
   on covered mutations — above the ≥85% target. The two `NO_COVERAGE` survivors are auto-generated
   data-class getters on read-side models (`Withdrawal.getId`, `TimeDepositWithWithdrawals.getWithdrawals`),
   not interest logic; their behaviour is killed by the endpoint/persistence suites
@@ -234,15 +261,17 @@ turns the round-trip test red on exactly the sub-cent value).
   confirmed byte-identity, the preserved rounding quirk, the frozen `TimeDeposit`, exactly-two
   endpoints, working `@Transactional` proxying, and the unconstrained `NUMERIC` column. Two LOW
   findings (F1 `-0.0`, F2 overflow→500), both unreachable through the two endpoints or waived by the
-  brief — documented under Known limitations, no code change.
+  brief — documented under Known limitations; overflow rollback is now pinned by Test 4.
 
 ### Operator verification record
 
 The operator ran `mvn -q test` from `kotlin/` independently at every phase gate and confirmed the
 result before approving; verification was never taken on the agent's word. Through the Phase 7
 reopening the agent observed **49 tests green, 0 failures** (fresh `mvn clean` then `mvn -q test`).
-At closure the operator ran the suite independently one final time — **49 green, fresh** — and
-approved. Repo closed.
+At the first closure the operator ran the suite independently one final time — **49 green, fresh** —
+and approved. In the second reopening, the agent observed **50 tests green, 0 failures** after adding
+the rollback pin and correcting the documentation evidence tiers. Operator verification for the
+second reopening is pending at the closure gate.
 
 ---
 
@@ -276,7 +305,7 @@ message; commit messages state *why*, not just *what*.
 Essentially all of the production code, tests, and this documentation were AI-generated under the
 gated workflow — the exercise is explicitly about setting up and using an AI harness. The value the
 harness added was not raw code generation but **discipline**: pinning the legacy behaviour before
-touching it, computing expected values on the JVM rather than guessing, proving byte-identity by
+touching it, computing expected values on the JVM rather than guessing, running an out-of-band
 differential sweep, and surfacing every ambiguity to the operator as a numbered assumption rather
 than silently choosing. Design decisions — the `withdrawals` semantics, the unconstrained `NUMERIC`
 column, the toolchain bump, the POST semantics — were each raised to the operator and ruled on, then
@@ -291,9 +320,8 @@ claim otherwise — the scenarios and expected values are the operator's; the me
 is the agent's.
 
 ### Error ledger (honest)
-`DECISIONS.md` carries an `E{n}` error log with three entries. **None was a behaviour or correctness
-error in the interest logic**, and two of the three were mistakes in *verification*, not in the code
-at all:
+`DECISIONS.md` carries an `E{n}` error log. **None was a behaviour or correctness error in the
+interest logic**, and most were mistakes in *verification*, not in the code at all:
 - **E1** (code, non-behaviour) — a Kotlin `const val` in a *private* companion object leaked onto the
   public API surface. Caught by inspecting bytecode with `javap` rather than trusting Kotlin
   visibility keywords. It widened an API surface; it never produced a wrong value.
@@ -303,9 +331,10 @@ at all:
 - **E3** (evidence-side) — a shell `||` fallback in a manual demo fired a second POST and briefly
   looked like the endpoint was double-applying interest; it was the verification command calling the
   endpoint twice, not a code fault.
+- **E4** (evidence-side) — a concurrent mutation run contaminated a reviewer clone.
+- **E5** (evidence-side) — the reopening README audit checked only new claims and missed stale
+  pre-existing test-count lines. The tightened rule is full-document, not delta-only, audit.
 
 The interest logic produced **zero behaviour errors across the recorded phases**, bounded by the
-46-test suite, the 47.6M-input differential sweep, and the operator's cold adversarial suite — which
-passed on the first run with no production-code change. That bound is stated plainly rather than
+current 50-test suite and the tiered audit evidence above. That bound is stated plainly rather than
 padded.
-
