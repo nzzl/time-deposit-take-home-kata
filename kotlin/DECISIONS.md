@@ -300,7 +300,7 @@ test (E5 already pins the two-call value) before trusting an ad-hoc manual run.
 
 ---
 
-## D19 — Demo seed data via a `demo` Spring profile (PENDING — Phase 6) *(operator ruling)*
+## D19 — Demo seed data via a `demo` Spring profile *(operator ruling)*
 **Decision.** A reviewer following the Swagger instructions must see real data. Seed it behind a
 `demo` profile — a `@Profile("demo")` `CommandLineRunner` that inserts a small fixed set of deposits
 and withdrawals only if the tables are empty — activated with `--spring.profiles.active=demo`.
@@ -310,11 +310,14 @@ own data (they `DELETE` in `@BeforeEach`). Insert-if-empty makes repeated demo s
 **Rejected.** A plain `data.sql` — with `spring.sql.init.mode=always` it would also run against the
 Testcontainers database, coupling demo data to test runs. Manual `psql` inserts only — turnkey-poor
 for a reviewer.
-**Phase.** ruling received 3d; implement in Phase 6.
+**Phase.** ruling received 3d; implemented Phase 6 as `config/DemoDataSeeder.kt` — `@Profile("demo")`
+`CommandLineRunner`, insert-if-empty. Verified inactive under `mvn test` (46 tests unchanged) and
+active under `--spring.profiles.active=demo` (six deposits + two withdrawals seeded).
 
-## D20 — OpenAPI title and description (PENDING — Phase 6) *(operator ruling)*
+## D20 — OpenAPI title and description *(operator ruling)*
 **Decision.** Set a real contract title and a one-line description (replacing the springdoc default
 "OpenAPI definition") via a minimal `OpenAPI` `@Bean` with an `Info(title, description)`.
 **Reason.** Presentation of the contract is part of the submission instructions; the default title is
 placeholder-grade.
-**Phase.** ruling received 3d; implement in Phase 6.
+**Phase.** ruling received 3d; implemented Phase 6 as `config/OpenApiConfig.kt`. Verified live:
+`/v3/api-docs` now reports title "XA Bank Time Deposit API", version 1.0.0.
